@@ -8,6 +8,8 @@ edition = "2021"
 
 [dependencies]
 dioxus = { version = "0.6.0", features = ["fullstack", "desktop"] }
+rfd = "0.15"
+native-dialog = "0.9"
 
 [features]
 default = ["desktop"]
