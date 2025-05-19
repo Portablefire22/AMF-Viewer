@@ -5,6 +5,7 @@ struct AMFReader {
     buffer: Vec<u8>,
     read_head: usize,
     out: Vec<SyntaxByte>,
+    encoding: u8,
 }
 
 impl AMFReader {
@@ -13,28 +14,72 @@ impl AMFReader {
             buffer: buffer.clone(),
             read_head: 0,
             out: Vec::new(),
+            encoding: 0,
         }
     }
 
     pub fn highlight(&mut self) {
         while &self.read_head < &self.buffer.len() {
-            let current_byte = self.buffer[self.read_head];
-            if current_byte == 0x09 {
-                self.out.push(SyntaxByte {
-                    value: current_byte,
-                    object_id: 10,
-                    color: "text-ctp-green",
-                });
+            if self.encoding == 0 {
+                self.decode_amf0();
             } else {
+                self.decode_amf3();
+            }
+        }
+    }
+
+    pub fn decode_amf0(&mut self) {
+        let current_byte = self.read_byte();
+        match current_byte {
+            0x00 => {
                 self.out.push(SyntaxByte {
                     value: current_byte,
-                    object_id: 0,
-                    color: "text-ctp-text",
+                    object_id: 2,
+                    color: "text-ctp-blue",
                 });
             }
-
-            self.read_head += 1;
+            0x01 => {}
+            0x02 => {}
+            0x06 => {}
+            0x07 => {}
+            0x08 => {}
+            0x09 => {}
+            0x0A => {}
+            0x0B => {}
+            0x0C => {}
+            0x0D => {}
+            0x0F => {}
+            0x10 => {}
+            0x11 => {
+                self.out.push(SyntaxByte {
+                    value: current_byte,
+                    object_id: 1,
+                    color: "text-ctp-pink",
+                });
+                self.encoding = 3;
+            }
+            _ => self.out.push(SyntaxByte {
+                value: current_byte,
+                object_id: 0,
+                color: "text-ctp-red",
+            }),
         }
+    }
+    pub fn decode_amf3(&mut self) {
+        let current_byte = self.read_byte();
+        match current_byte {
+            _ => self.out.push(SyntaxByte {
+                value: current_byte,
+                object_id: 1,
+                color: "text-ctp-green",
+            }),
+        }
+    }
+
+    pub fn read_byte(&mut self) -> u8 {
+        let b = self.buffer[self.read_head];
+        self.read_head += 1;
+        b
     }
 }
 
