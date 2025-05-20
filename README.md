@@ -13,7 +13,9 @@ Rust itch until I progress further in my main project to start writing a Rust XM
 
 # Images
 
-![Version 0.0.0 Image]()
+![Version 0.0.0 Image](https://github.com/Portablefire22/AMF-Viewer/blob/master/.github/images/AMF%20Viewer%200.0.0.png?raw=true:w
+)
+*Version 0.0.0: Highlighting for different AMF0 types*
 
 # Running
 
