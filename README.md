@@ -11,6 +11,10 @@ So I'm making a "simple" rust application to visualise AMF/RTMP packets, and hop
 enough to debug issues with my main project. Mainly though, this was done just to scratch my
 Rust itch until I progress further in my main project to start writing a Rust XMPP server.
 
+# Images
+
+![Version 0.0.0 Image]()
+
 # Running
 
 These sections are here for later me because I can barely remember the damn package's name.
