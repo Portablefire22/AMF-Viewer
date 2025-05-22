@@ -1,16 +1,20 @@
 mod amf;
 
+use crate::amf::amf_highlight::AMFReader;
+
+use crate::amf::object_info::ObjectInfo;
 use dioxus::desktop::tao::dpi::Size;
-use dioxus::desktop::tao::platform::windows::WindowBuilderExtWindows;
 use dioxus::desktop::{tao, LogicalSize};
 use dioxus::dioxus_core::SpawnIfAsync;
-use dioxus::html::completions::CompleteWithBraces::p;
+use dioxus::logger::tracing;
 use dioxus::prelude::*;
 use native_dialog::{DialogBuilder, MessageLevel};
 use rfd::FileDialog;
 use std::fs;
 use std::fs::File;
+use std::ops::Deref;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
@@ -32,6 +36,23 @@ impl OpenedFile {
     }
 }
 
+#[derive(Clone, Debug)]
+struct ObjectContext {
+    objects: Signal<Vec<ObjectInfo>>,
+    selected_index: Signal<usize>,
+    has_selected: Signal<bool>,
+}
+
+impl ObjectContext {
+    pub fn new() -> Self {
+        Self {
+            objects: Signal::new(Vec::new()),
+            selected_index: Signal::new(0),
+            has_selected: Signal::new(false),
+        }
+    }
+}
+
 static CURRENT_FILE: GlobalSignal<OpenedFile> = Global::new(|| OpenedFile::new());
 
 fn main() {
@@ -41,7 +62,7 @@ fn main() {
             width: 1280.0,
             height: 720.0,
         }))
-        .with_title("AMF Viewer");
+        .with_title(format!("AMF Viewer v{}", env!("CARGO_PKG_VERSION")));
     dioxus::LaunchBuilder::new()
         .with_cfg(
             dioxus::desktop::Config::new()
@@ -64,6 +85,8 @@ fn show_error(title: &str, body: String) {
 
 #[component]
 fn App() -> Element {
+    let state = use_context_provider(|| ObjectContext::new());
+
     rsx! {
         document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "stylesheet", href: MAIN_CSS }
@@ -124,7 +147,6 @@ fn CentreBox() -> Element {
             class: "bg-ctp-crust m-3 grow-[7] max-w-[66%] outline outline-2 outline-ctp-pink p-2 rounded-md scroll-auto",
             h1 {
                 class: "text-ctp-text",
-                "Centre"
             }
             if file.is_open {
                 FileOpened {}
@@ -147,6 +169,15 @@ fn FileOpened() -> Element {
         }
     };
 
+    let mut reader = AMFReader::new(&buffer, false);
+    reader.highlight();
+
+    let mut obj_context = use_context::<ObjectContext>().objects;
+    obj_context.set(reader.objects.clone());
+    let mut obj_context = use_context::<ObjectContext>().has_selected;
+    obj_context.set(true);
+    let mut obj_context = use_context::<ObjectContext>().selected_index;
+
     rsx! {
         div {
             class: "max-w-[27rem]",
@@ -155,20 +186,44 @@ fn FileOpened() -> Element {
                 class: "text-ctp-subtext0 hex",
                 "00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F "
             }
-
-            amf::amf_highlight::highlight_bytes {buffer, is_command: false}
+            for byte in reader.out {
+                span {
+                    class: {
+                        if byte.object_id == *obj_context.read() {
+                            format!("{} hex outline outline-2 outline-ctp-white", byte.color)
+                        } else {
+                            format!("{} hex", byte.color)
+                        }
+                    },
+                    id: "{byte.object_id}",
+                    onclick:  move |_| {
+                        tracing::debug!("Hovered: {:?}", byte.object_id);
+                        obj_context.set(byte.object_id);
+                    },
+                    "{byte.value:02X} "
+                }
+            }
         }
     }
 }
 
 #[component]
 fn RightBar() -> Element {
+    let cont = use_context::<ObjectContext>();
     rsx! {
         div {
-            class: "bg-ctp-crust min-w-1/5 grow-[3] m-3 outline outline-2 outline-ctp-pink p-2 rounded-md",
+            class: "bg-ctp-crust min-w-1/5 grow-[3] max-w-[25%] m-3 outline outline-2 outline-ctp-pink p-2 rounded-md",
              h1 {
                 class: "text-ctp-text",
-                "Right"
+                {
+                    let mut current_index = cont.selected_index.read();
+                    if *cont.has_selected.read() {
+                    let current_obj = &cont.objects.read()[current_index.clone()];
+                    format!("Object Inspector\n {current_obj:?}")
+                    } else {
+                    "No object selected".parse()?
+                    }
+                }
             }
         }
     }
