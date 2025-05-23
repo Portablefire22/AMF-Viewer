@@ -120,6 +120,10 @@ fn LeftBar() -> Element {
                             return
                         }
                     };
+                    let mut obj_context = use_context::<ObjectContext>();
+                    obj_context.objects.set(Vec::new());
+                    obj_context.has_selected.set(false);
+                    obj_context.selected_index.set(0);
 
                     let file = File::open(path.clone());
                     let file = match file {
@@ -172,11 +176,9 @@ fn FileOpened() -> Element {
     let mut reader = AMFReader::new(&buffer, false);
     reader.highlight();
 
-    let mut obj_context = use_context::<ObjectContext>().objects;
-    obj_context.set(reader.objects.clone());
-    let mut obj_context = use_context::<ObjectContext>().has_selected;
-    obj_context.set(true);
-    let mut obj_context = use_context::<ObjectContext>().selected_index;
+    let mut obj_context = use_context::<ObjectContext>();
+    obj_context.objects.set(reader.objects.clone());
+    obj_context.has_selected.set(true);
 
     rsx! {
         div {
@@ -189,8 +191,8 @@ fn FileOpened() -> Element {
             for byte in reader.out {
                 span {
                     class: {
-                        if byte.object_id == *obj_context.read() {
-                            format!("{} hex outline outline-2 outline-ctp-white", byte.color)
+                        if byte.object_id == *obj_context.selected_index.read() {
+                            format!("{} hex outline outline-2", byte.color)
                         } else {
                             format!("{} hex", byte.color)
                         }
@@ -198,7 +200,7 @@ fn FileOpened() -> Element {
                     id: "{byte.object_id}",
                     onclick:  move |_| {
                         tracing::debug!("Hovered: {:?}", byte.object_id);
-                        obj_context.set(byte.object_id);
+                        obj_context.selected_index.set(byte.object_id);
                     },
                     "{byte.value:02X} "
                 }
@@ -216,12 +218,12 @@ fn RightBar() -> Element {
              h1 {
                 class: "text-ctp-text",
                 {
-                    let mut current_index = cont.selected_index.read();
+                    let current_index = cont.selected_index.read();
                     if *cont.has_selected.read() {
-                    let current_obj = &cont.objects.read()[current_index.clone()];
-                    format!("Object Inspector\n {current_obj:?}")
+                        let current_obj = &cont.objects.read()[current_index.clone()];
+                        format!("Object Inspector\n {current_obj:?}")
                     } else {
-                    "No object selected".parse()?
+                        "No object selected".parse()?
                     }
                 }
             }
