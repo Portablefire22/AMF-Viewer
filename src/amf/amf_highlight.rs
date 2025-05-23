@@ -1,11 +1,14 @@
 use crate::amf::object_info::ObjectInfo;
+use crate::amf::object_properties::GenericProperties;
 use crate::amf::object_properties::ObjectProperties::{
-    Amf0ObjectProperties, Amf0StringProperties, Amf0TypedObjectProperties, AmfNoProperties,
+    Amf0ObjectProperties, Amf0StringProperties, Amf0TypedObjectProperties, Amf3ArrayProperties,
+    Amf3StringProperties, AmfNoProperties,
 };
 use crate::amf::object_type::ObjectType;
-use crate::amf::object_type::ObjectType::Amf0Number;
+use crate::amf::object_type::ObjectType::{Amf0Number, Amf3Array, Amf3Integer, Amf3String};
 use crate::amf::syntax_byte::SyntaxByte;
 use dioxus::html::completions::CompleteWithBraces::object;
+use dioxus::html::g::string;
 use dioxus::logger::tracing;
 use std::io::Read;
 
@@ -20,9 +23,19 @@ const AMF0_STRING_MARKER: &'static str = "text-ctp-yellow/80";
 const AMF0_OBJECT: &'static str = "text-ctp-teal";
 const AMF0_OBJECT_MARKER: &'static str = "text-ctp-teal/80";
 const AMF0_NULL: &'static str = "text-ctp-rosewater";
-const AMF0_TYPED_OBJECT: &'static str = "text-ctp-yellow";
+const AMF0_TYPED_OBJECT: &'static str = "text-ctp-mauve";
 const AMF0_TYPED_OBJECT_MARKER: &'static str = "text-ctp-yellow/80";
 const AMF0_SWITCH_MARKER: &'static str = "text-ctp-pink/80";
+const AMF3_UNDEFINED: &'static str = "text-ctp-pink";
+const AMF3_NULL: &'static str = "text-ctp-rosewater";
+const AMF3_FALSE: &'static str = "text-ctp-red";
+const AMF3_TRUE: &'static str = "text-ctp-green";
+const AMF3_INTEGER: &'static str = "text-ctp-sky";
+const AMF3_DOUBLE: &'static str = "text-ctp-blue";
+const AMF3_STRING: &'static str = "text-ctp-yellow";
+const AMF3_DATE: &'static str = "text-ctp-rosewater";
+const AMF3_ARRAY: &'static str = "text-ctp-lavender";
+const AMF3_OBJECT: &'static str = "text-ctp-mauve";
 
 // I fucking LOVE Action Message Format
 pub struct AMFReader {
@@ -340,15 +353,233 @@ impl AMFReader {
             }
         }
     }
-    pub fn read_amf3(&mut self) {
+
+    pub fn read_amf3_integer(&mut self, object_id: Option<usize>) -> i32 {
+        let object_id: usize = match object_id {
+            Some(id) => id,
+            None => self.objects.len(),
+        };
+        let syntax = SyntaxByte {
+            value: 0,
+            object_id,
+            color: AMF3_INTEGER.parse().unwrap(),
+        };
+        let out = self.amf3_integer(syntax);
+        let info = ObjectInfo {
+            object_id,
+            object_type: ObjectType::Amf3Integer(out),
+            object_properties: AmfNoProperties,
+        };
+        self.objects.push(info);
+        out
+    }
+
+    fn amf3_integer(&mut self, mut syntax: SyntaxByte) -> i32 {
+        let mut out: i32 = 0;
+        let mut i = 0;
+        let mut current_byte = self.read_byte();
+        syntax.value = current_byte;
+        self.out.push(syntax.clone());
+
+        while current_byte & 0x80 != 0 && i < 3 {
+            out = (out << 7) + (current_byte & 0x7F) as i32;
+            current_byte = self.read_byte();
+            let mut syntax = syntax.clone();
+            syntax.value = current_byte;
+            self.out.push(syntax);
+            i += 1;
+        }
+        if i < 3 {
+            out = (out << 7) | current_byte as i32;
+        } else {
+            out = (out << 8) | current_byte as i32;
+        }
+        out
+    }
+
+    pub fn read_amf3_string_length(&mut self, object_id: Option<usize>) -> i32 {
+        let object_id: usize = match object_id {
+            Some(id) => id,
+            None => self.objects.len(),
+        };
+        let syntax = SyntaxByte {
+            value: 0,
+            object_id,
+            color: AMF3_INTEGER.parse().unwrap(),
+        };
+        self.out.push(syntax.clone());
+        self.amf3_integer(syntax)
+    }
+
+    pub fn read_amf3_string(&mut self, object_id: Option<usize>) -> String {
+        let object_id: usize = match object_id {
+            Some(id) => id,
+            None => self.objects.len(),
+        };
+
+        let mut refe = self.read_amf3_string_length(Some(object_id));
+        let inline = (refe & 0x01) == 1;
+        refe >>= 1;
+        if inline {
+            if refe == 0 {
+                return String::from("");
+            }
+            let out = self.read_amf3_utf8(refe, Some(object_id));
+            let info = ObjectInfo {
+                object_id,
+                object_type: ObjectType::Amf3String(out.clone()),
+                object_properties: Amf3StringProperties(GenericProperties::new(
+                    false,
+                    out.len() as i32,
+                )),
+            };
+            self.objects.push(info);
+            out
+        } else {
+            let info = ObjectInfo {
+                object_id,
+                object_type: ObjectType::Amf3String(String::from("Not Implemented")),
+                object_properties: Amf3StringProperties(GenericProperties::new(false, 0)),
+            };
+            self.objects.push(info);
+            String::from("Not Implemented")
+        }
+    }
+
+    pub fn read_amf3_utf8(&mut self, length: i32, object_id: Option<usize>) -> String {
+        let object_id: usize = match object_id {
+            Some(id) => id,
+            None => self.objects.len(),
+        };
+        let syntax = SyntaxByte {
+            value: 0,
+            object_id,
+            color: AMF3_STRING.parse().unwrap(),
+        };
+        let string_bytes = self.push_bytes(syntax, length as usize - 1);
+        let out = String::from_utf8(string_bytes).unwrap();
+
+        out
+    }
+
+    pub fn read_amf3_array(&mut self, object_id: Option<usize>) -> Vec<usize> {
+        let object_id: usize = match object_id {
+            Some(id) => id,
+            None => self.objects.len(),
+        };
+
+        let mut out = Vec::new();
+        let mut refer = self.read_amf3_string_length(Some(object_id));
+        refer >>= 1;
+        let mut obj = ObjectInfo {
+            object_id,
+            object_type: Amf3Array(Vec::new()),
+            object_properties: Amf3ArrayProperties(GenericProperties::new(false, refer)),
+        };
+        self.objects.push(obj.clone());
+
+        for _ in 0..refer {
+            let id = self.read_amf3();
+            out.push(id);
+        }
+        obj.object_type = Amf3Array(out.clone());
+        self.objects[object_id] = obj;
+        out
+    }
+
+    pub fn read_amf3(&mut self) -> usize {
+        let object_id = self.objects.len();
         let current_byte = self.read_byte();
         match current_byte {
-            _ => self.out.push(SyntaxByte {
-                value: current_byte,
-                object_id: 1,
-                color: "text-ctp-green".parse().unwrap(),
-            }),
+            0x01 => {
+                self.out.push(SyntaxByte {
+                    value: current_byte,
+                    object_id,
+                    color: AMF3_NULL.parse().unwrap(),
+                });
+                let info = ObjectInfo {
+                    object_id,
+                    object_type: ObjectType::Amf3Null,
+                    object_properties: AmfNoProperties,
+                };
+                self.objects.push(info);
+            }
+            0x02 => {
+                // False
+                self.out.push(SyntaxByte {
+                    value: current_byte,
+                    object_id,
+                    color: AMF3_FALSE.parse().unwrap(),
+                });
+                let info = ObjectInfo {
+                    object_id,
+                    object_type: ObjectType::Amf3False,
+                    object_properties: AmfNoProperties,
+                };
+                self.objects.push(info);
+            }
+            0x03 => {
+                // True
+                self.out.push(SyntaxByte {
+                    value: current_byte,
+                    object_id,
+                    color: AMF3_TRUE.parse().unwrap(),
+                });
+                let info = ObjectInfo {
+                    object_id,
+                    object_type: ObjectType::Amf3True,
+                    object_properties: AmfNoProperties,
+                };
+                self.objects.push(info)
+            }
+            0x04 => {
+                // Integer
+                self.out.push(SyntaxByte {
+                    value: current_byte,
+                    object_id,
+                    color: AMF3_INTEGER.parse().unwrap(),
+                });
+                self.read_amf3_integer(Some(object_id));
+            }
+            0x05 => {
+                self.out.push(SyntaxByte {
+                    value: current_byte,
+                    object_id,
+                    color: AMF0_NUMBER_MARKER.parse().unwrap(),
+                });
+                self.read_amf0_integer(Some(object_id));
+            }
+            0x06 => {
+                self.out.push(SyntaxByte {
+                    value: current_byte,
+                    object_id,
+                    color: AMF3_STRING.parse().unwrap(),
+                });
+                self.read_amf3_string(Some(object_id));
+            }
+            0x08 => {
+                self.out.push(SyntaxByte {
+                    value: current_byte,
+                    object_id,
+                    color: AMF3_ARRAY.parse().unwrap(),
+                });
+                self.read_amf3_array(Some(object_id));
+            }
+            _ => {
+                self.out.push(SyntaxByte {
+                    value: current_byte,
+                    object_id,
+                    color: "text-ctp-maroon".parse().unwrap(),
+                });
+                let info = ObjectInfo {
+                    object_id,
+                    object_type: ObjectType::Amf3Undefined,
+                    object_properties: AmfNoProperties,
+                };
+                self.objects.push(info)
+            }
         }
+        object_id
     }
 
     pub fn read_byte(&mut self) -> u8 {

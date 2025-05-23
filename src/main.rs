@@ -173,7 +173,7 @@ fn FileOpened() -> Element {
         }
     };
 
-    let mut reader = AMFReader::new(&buffer, false);
+    let mut reader = AMFReader::new(&buffer, true);
     reader.highlight();
 
     let mut obj_context = use_context::<ObjectContext>();

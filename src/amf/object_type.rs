@@ -23,7 +23,7 @@ pub enum ObjectType {
     Amf3String(String),
     Amf3XMLDocument,
     Amf3Date,
-    Amf3Array,
+    Amf3Array(Vec<usize>),
     Amf3Object,
     Amf3XML,
     Amf3ByteArray,
