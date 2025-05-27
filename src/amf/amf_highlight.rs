@@ -45,6 +45,7 @@ pub struct AMFReader {
     encoding: u8,
     current_layer: u8, // Change colour depending on object layer
     pub(crate) objects: Vec<ObjectInfo>,
+    strings: Vec<String>,
 }
 
 impl AMFReader {
@@ -58,6 +59,7 @@ impl AMFReader {
                 encoding,
                 current_layer: 0,
                 objects: Vec::new(),
+                strings: Vec::new(),
             }
         } else {
             AMFReader {
@@ -67,6 +69,7 @@ impl AMFReader {
                 encoding: 0,
                 current_layer: 0,
                 objects: Vec::new(),
+                strings: Vec::new(),
             }
         }
     }
@@ -434,15 +437,21 @@ impl AMFReader {
                 )),
             };
             self.objects.push(info);
+            self.strings.push(out.clone());
             out
         } else {
+            let s: String = match self.strings.get(refe as usize) {
+                Some(s) => s.clone(),
+                None => String::from("String Not Found"),
+            };
+
             let info = ObjectInfo {
                 object_id,
-                object_type: ObjectType::Amf3String(String::from("Not Implemented")),
-                object_properties: Amf3StringProperties(GenericProperties::new(false, 0)),
+                object_type: ObjectType::Amf3String(s.clone()),
+                object_properties: Amf3StringProperties(GenericProperties::new(true, refe)),
             };
             self.objects.push(info);
-            String::from("Not Implemented")
+            s
         }
     }
 

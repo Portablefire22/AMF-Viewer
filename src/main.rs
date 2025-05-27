@@ -3,6 +3,8 @@ mod amf;
 use crate::amf::amf_highlight::AMFReader;
 
 use crate::amf::object_info::ObjectInfo;
+use crate::amf::object_properties::ObjectProperties;
+use crate::amf::object_type::ObjectType;
 use dioxus::desktop::tao::dpi::Size;
 use dioxus::desktop::{tao, LogicalSize};
 use dioxus::dioxus_core::SpawnIfAsync;
@@ -12,9 +14,7 @@ use native_dialog::{DialogBuilder, MessageLevel};
 use rfd::FileDialog;
 use std::fs;
 use std::fs::File;
-use std::ops::Deref;
 use std::path::PathBuf;
-use std::rc::Rc;
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
@@ -25,6 +25,7 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 struct OpenedFile {
     is_open: bool,
     path: PathBuf,
+    is_command: Signal<bool>,
 }
 
 impl OpenedFile {
@@ -32,6 +33,7 @@ impl OpenedFile {
         OpenedFile {
             is_open: false,
             path: PathBuf::new(),
+            is_command: Signal::new(false),
         }
     }
 }
@@ -92,7 +94,7 @@ fn App() -> Element {
         document::Link { rel: "stylesheet", href: MAIN_CSS }
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         div {
-            class: "ctp-latte dark:ctp-mocha bg-ctp-base min-w-full min-h-screen flex flex-row",
+            class: "ctp-latte dark:ctp-mocha bg-ctp-base min-w-full max-h-screen min-h-screen flex flex-row",
             LeftBar {}
             CentreBox {}
             RightBar {}
@@ -102,42 +104,61 @@ fn App() -> Element {
 
 #[component]
 fn LeftBar() -> Element {
+    let mut command_signal = CURRENT_FILE.read().is_command;
+
     rsx! {
         div {
-            class: "bg-ctp-crust grow-[3] m-3 outline outline-2 outline-ctp-pink p-2 rounded-md",
-            button {
-                class: "bg-ctp-surface0 outline outline-2 outline-ctp-pink text-ctp-text hover:outline-ctp-blue hover:bg-ctp-lavender hover:text-ctp-crust py-2 px-4 rounded",
-                onclick: move |_| {
-                    let mut handle = CURRENT_FILE.write();
-                    handle.is_open = false;
-                    handle.path = PathBuf::new();
-                    let path = FileDialog::new().pick_file();
-                    let path = match path {
-                        Some(path) => path,
-                        None => {
-                            show_error("Error: Could not open file",
-                                format!("Could not open file:\n{:?}", path));
-                            return
-                        }
-                    };
-                    let mut obj_context = use_context::<ObjectContext>();
-                    obj_context.objects.set(Vec::new());
-                    obj_context.has_selected.set(false);
-                    obj_context.selected_index.set(0);
+            class: "bg-ctp-crust grow-[3] m-3 outline outline-2 outline-ctp-pink p-2 rounded-md flex flex-row",
+            div {
+                div {
+                    class: "h-fit m-2",
+                    button {
+                        class: "bg-ctp-surface0 outline outline-2 outline-ctp-pink text-ctp-text hover:outline-ctp-blue hover:bg-ctp-lavender hover:text-ctp-crust py-2 px-4 rounded",
+                        onclick: move |_| {
+                            let mut handle = CURRENT_FILE.write();
+                            handle.is_open = false;
+                            handle.path = PathBuf::new();
+                            let path = FileDialog::new().pick_file();
+                            let path = match path {
+                                Some(path) => path,
+                                None => {
+                                    show_error("Error: Could not open file",
+                                        format!("Could not open file:\n{:?}", path));
+                                    return
+                                }
+                            };
+                            let mut obj_context = use_context::<ObjectContext>();
+                            obj_context.objects.set(Vec::new());
+                            obj_context.has_selected.set(false);
+                            obj_context.selected_index.set(0);
 
-                    let file = File::open(path.clone());
-                    let file = match file {
-                        Ok(file) => file,
-                        Err(e) => {
-                            show_error("Error: Could not open file",
-                                format!("Could not open file:\n{:?}", e));
-                            return
-                        }
-                    };
-                    handle.is_open = true;
-                    handle.path = path;
-                },
-                "Open File"
+                            let file = File::open(path.clone());
+                            let file = match file {
+                                Ok(file) => file,
+                                Err(e) => {
+                                    show_error("Error: Could not open file",
+                                        format!("Could not open file:\n{:?}", e));
+                                    return
+                                }
+                            };
+                            handle.is_open = true;
+                            handle.path = path;
+                        },
+                        "Open File"
+                    }
+                }
+                div {
+                    class: "h-fit m-2",
+                    input {
+                        r#type: "checkbox",
+                        checked: command_signal,
+                        oninput: move |_| command_signal.set(!command_signal()),
+                    }
+                    label {
+                        class: "pl-2 text-ctp-text",
+                        "Is command?"
+                    }
+                }
             }
         }
     }
@@ -148,7 +169,7 @@ fn CentreBox() -> Element {
     let file = CURRENT_FILE.read();
     rsx! {
         div {
-            class: "bg-ctp-crust m-3 grow-[7] max-w-[66%] outline outline-2 outline-ctp-pink p-2 rounded-md scroll-auto",
+            class: "bg-ctp-crust m-3 grow-[7] max-w-[66%] outline outline-2 outline-ctp-pink p-2 rounded-md scroll-auto overflow-auto",
             h1 {
                 class: "text-ctp-text",
             }
@@ -173,7 +194,7 @@ fn FileOpened() -> Element {
         }
     };
 
-    let mut reader = AMFReader::new(&buffer, true);
+    let mut reader = AMFReader::new(&buffer, *CURRENT_FILE.read().is_command.read());
     reader.highlight();
 
     let mut obj_context = use_context::<ObjectContext>();
@@ -210,23 +231,99 @@ fn FileOpened() -> Element {
 }
 
 #[component]
-fn RightBar() -> Element {
-    let cont = use_context::<ObjectContext>();
+pub fn ObjectInspector(obj: Option<ObjectInfo>) -> Element {
+    let obj = match obj {
+        Some(obj) => obj,
+        None => {
+            return rsx! {
+                "No object selected"
+            }
+        }
+    };
+
     rsx! {
         div {
-            class: "bg-ctp-crust min-w-1/5 grow-[3] max-w-[25%] m-3 outline outline-2 outline-ctp-pink p-2 rounded-md",
-             h1 {
-                class: "text-ctp-text",
-                {
-                    let current_index = cont.selected_index.read();
-                    if *cont.has_selected.read() {
-                        let current_obj = &cont.objects.read()[current_index.clone()];
-                        format!("Object Inspector\n {current_obj:?}")
-                    } else {
-                        "No object selected".parse()?
-                    }
+            class: "flex flex-col",
+            ObjectInspectorValue {name: "Object ID", value: obj.object_id}
+            ObjectInspectorValue {name: "Object Type", value: obj.object_type.clone()}
+            ObjectInspectorContents {obj: obj.object_type}
+            ObjectInspectorProperties {properties: obj.object_properties}
+        }
+    }
+}
+
+#[component]
+fn ObjectInspectorContents(obj: ObjectType) -> Element {
+    match obj {
+        ObjectType::Amf0Number(value) => rsx! {ObjectInspectorValue {name: "Value", value}},
+        ObjectType::Amf0Bool(value) => rsx! {ObjectInspectorValue {name: "Value", value}},
+        ObjectType::Amf0String(value) => rsx! {ObjectInspectorValue {name: "Value", value}},
+        ObjectType::Amf3Integer(value) => rsx! {ObjectInspectorValue {name: "Value", value}},
+        ObjectType::Amf3Double(value) => rsx! {ObjectInspectorValue {name: "Value", value}},
+        ObjectType::Amf3String(value) => rsx! {ObjectInspectorValue {name: "Value", value}},
+        ObjectType::Amf3Array(value) => {
+            rsx! {ObjectInspectorValue {name: "Value", value: format!("{:?}", value) }}
+        }
+
+        _ => rsx! {},
+    }
+}
+#[component]
+fn ObjectInspectorProperties(properties: ObjectProperties) -> Element {
+    match properties {
+        ObjectProperties::Amf3StringProperties(prop) => {
+            if prop.is_reference {
+                rsx! {
+                    ObjectInspectorValue {name: "Is Reference?", value: prop.is_reference}
+                    ObjectInspectorValue {name: "Identifier", value: prop.identifier}
+                }
+            } else {
+                rsx! {
+                    ObjectInspectorValue {name: "Is Reference?", value: prop.is_reference}
+                    ObjectInspectorValue {name: "String Length", value: prop.identifier}
                 }
             }
+        }
+        _ => rsx! {},
+    }
+}
+
+#[component]
+fn ObjectInspectorValue(name: String, value: String) -> Element {
+    rsx! {
+         span {
+            class: "flex flex-row",
+            p {
+                class: "text-ctp-text font-medium",
+                "{name}: "
+            }
+            p {
+                class: "text-ctp-text pl-2",
+                "{value}"
+            }
+        }
+    }
+}
+
+#[component]
+fn RightBar() -> Element {
+    let cont = use_context::<ObjectContext>();
+    let current_index = cont.selected_index.read();
+    let obj = match *cont.has_selected.read() {
+        true => {
+            let obj = &cont.objects.read()[current_index.clone()];
+            Some(obj.clone())
+        }
+        false => None,
+    };
+    rsx! {
+        div {
+            class: "bg-ctp-crust min-w-1/5 grow-[3] max-w-[25%] m-3 outline outline-2 outline-ctp-pink p-2 rounded-md overflow-auto text-ctp-text",
+            h1 {
+                class: "text-ctp-text font-bold",
+                "Object Inspector"
+            }
+            ObjectInspector {obj}
         }
     }
 }

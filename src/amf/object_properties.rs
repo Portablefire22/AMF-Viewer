@@ -1,4 +1,4 @@
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ObjectProperties {
     Amf0StringProperties,
     Amf0ObjectProperties,
@@ -9,10 +9,10 @@ pub enum ObjectProperties {
     AmfNoProperties,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GenericProperties {
-    is_reference: bool,
-    identifier: i32, // Reference ID when a reference, length when not
+    pub(crate) is_reference: bool,
+    pub(crate) identifier: i32, // Reference ID when a reference, length when not
 }
 
 impl GenericProperties {
