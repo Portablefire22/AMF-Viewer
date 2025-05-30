@@ -414,7 +414,7 @@ impl AMFReader {
             object_id,
             color: AMF3_INTEGER.parse().unwrap(),
         };
-        self.out.push(syntax.clone());
+        // self.out.push(syntax.clone());
         self.amf3_integer(syntax)
     }
 
@@ -470,7 +470,7 @@ impl AMFReader {
             color: AMF3_STRING.parse().unwrap(),
         };
         let string_bytes = self.push_bytes(syntax, length as usize - 1);
-        let out = String::from_utf8(string_bytes).unwrap();
+        let out = String::from_utf8(string_bytes.clone()).unwrap_or(format!("{:?}", string_bytes));
 
         out
     }
@@ -523,15 +523,17 @@ impl AMFReader {
             let is_inline_class_def = (refer & 0x01) != 0;
             refer >>= 1;
             if is_inline_class_def {
-                result.encoding = (refer >> 1) & 0x03;
+                result.encoding = refer & 0x03;
                 result.externalisable = (result.encoding & 0x01) != 0;
-                result.dynamic = ((refer >> 2) & 0x01) != 0;
-                result.property_count = refer as usize >> 3;
+                result.dynamic = ((refer >> 1) & 0x01) != 0;
+                result.property_count = refer as usize >> 2;
+                tracing::debug!("Property count: {}", &result.property_count);
 
                 result.object_type = self.read_amf3_string(None);
 
-                for _ in 0..result.property_count {
+                for i in 0..result.property_count {
                     let key = self.read_amf3_string(None);
+                    tracing::debug!("Prop: {} | Key: {}", i, key);
                     result.properties.insert(key, None);
                 }
             } else {
