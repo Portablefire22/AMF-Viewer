@@ -1,15 +1,19 @@
+use crate::amf::amf3_object::AmfObject;
 use crate::amf::object_info::ObjectInfo;
-use crate::amf::object_properties::GenericProperties;
-use crate::amf::object_properties::ObjectProperties::{
+use crate::amf::object_properties::TypeProperties::{
     Amf0ObjectProperties, Amf0StringProperties, Amf0TypedObjectProperties, Amf3ArrayProperties,
-    Amf3StringProperties, AmfNoProperties,
+    Amf3ObjectProperties, Amf3StringProperties, AmfNoProperties,
 };
+use crate::amf::object_properties::{GenericProperties, ObjectProperties};
 use crate::amf::object_type::ObjectType;
-use crate::amf::object_type::ObjectType::{Amf0Number, Amf3Array, Amf3Integer, Amf3String};
+use crate::amf::object_type::ObjectType::{
+    Amf0Number, Amf3Array, Amf3Object, Amf3String, Amf3Undefined,
+};
 use crate::amf::syntax_byte::SyntaxByte;
 use dioxus::html::completions::CompleteWithBraces::object;
 use dioxus::html::g::string;
 use dioxus::logger::tracing;
+use std::collections::HashMap;
 use std::io::Read;
 
 const AMF0_NUMBER: &'static str = "text-ctp-blue";
@@ -496,6 +500,87 @@ impl AMFReader {
         out
     }
 
+    fn read_amf3_object(&mut self, object_id: Option<usize>) -> AmfObject {
+        let object_id: usize = match object_id {
+            Some(id) => id,
+            None => self.objects.len(),
+        };
+
+        let mut result = AmfObject::new(0, false, false, String::new(), HashMap::new());
+
+        let mut obj = ObjectInfo {
+            object_id,
+            object_type: Amf3Undefined,
+            object_properties: AmfNoProperties,
+        };
+
+        self.objects.push(obj.clone());
+
+        let mut refer = self.read_amf3_string_length(Some(object_id));
+        refer >>= 1;
+        let is_reference = refer & 0x01 == 0;
+        if !is_reference {
+            let is_inline_class_def = (refer & 0x01) != 0;
+            refer >>= 1;
+            if is_inline_class_def {
+                result.encoding = (refer >> 1) & 0x03;
+                result.externalisable = (result.encoding & 0x01) != 0;
+                result.dynamic = ((refer >> 2) & 0x01) != 0;
+                result.property_count = refer as usize >> 3;
+
+                result.object_type = self.read_amf3_string(None);
+
+                for _ in 0..result.property_count {
+                    let key = self.read_amf3_string(None);
+                    result.properties.insert(key, None);
+                }
+            } else {
+            }
+            if result.externalisable {
+            } else {
+                for (_, (key, value)) in result.properties.iter_mut().enumerate() {
+                    *value = Some(self.read_amf3());
+                }
+                if result.dynamic {
+                    loop {
+                        if self.read_head == self.buffer.len() {
+                            break;
+                        }
+                        let byte = self.buffer[self.read_head];
+                        if byte == 1 {
+                            self.read_head += 1;
+                            break;
+                        }
+                        let key = self.read_amf3_string(None);
+                        result.properties.insert(key, Some(self.read_amf3()));
+                    }
+                }
+            }
+        } else {
+        }
+
+        let handle = &result;
+        obj.object_type = Amf3Object(handle.properties.clone());
+
+        obj.object_properties = Amf3ObjectProperties(ObjectProperties::new(
+            is_reference,
+            handle.properties.len(),
+            handle.encoding as usize,
+            handle.externalisable,
+            handle.dynamic,
+            handle.object_type.clone(),
+        ));
+
+        match self.objects.get_mut(object_id) {
+            None => self.objects.push(obj),
+            Some(object) => {
+                *object = obj;
+            }
+        }
+
+        result
+    }
+
     pub fn read_amf3(&mut self) -> usize {
         let object_id = self.objects.len();
         let current_byte = self.read_byte();
@@ -573,6 +658,14 @@ impl AMFReader {
                     color: AMF3_ARRAY.parse().unwrap(),
                 });
                 self.read_amf3_array(Some(object_id));
+            }
+            0x0A => {
+                self.out.push(SyntaxByte {
+                    value: current_byte,
+                    object_id,
+                    color: AMF3_OBJECT.parse().unwrap(),
+                });
+                self.read_amf3_object(Some(object_id));
             }
             _ => {
                 self.out.push(SyntaxByte {

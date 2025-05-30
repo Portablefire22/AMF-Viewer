@@ -1,9 +1,10 @@
 mod amf;
 
 use crate::amf::amf_highlight::AMFReader;
+use std::collections::HashMap;
 
 use crate::amf::object_info::ObjectInfo;
-use crate::amf::object_properties::ObjectProperties;
+use crate::amf::object_properties::TypeProperties;
 use crate::amf::object_type::ObjectType;
 use dioxus::desktop::tao::dpi::Size;
 use dioxus::desktop::{tao, LogicalSize};
@@ -18,7 +19,6 @@ use std::path::PathBuf;
 
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
-const HEADER_SVG: Asset = asset!("/assets/header.svg");
 
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
@@ -231,7 +231,7 @@ fn FileOpened() -> Element {
 }
 
 #[component]
-pub fn ObjectInspector(obj: Option<ObjectInfo>) -> Element {
+pub fn object_inspector(obj: Option<ObjectInfo>) -> Element {
     let obj = match obj {
         Some(obj) => obj,
         None => {
@@ -244,44 +244,82 @@ pub fn ObjectInspector(obj: Option<ObjectInfo>) -> Element {
     rsx! {
         div {
             class: "flex flex-col",
-            ObjectInspectorValue {name: "Object ID", value: obj.object_id}
-            ObjectInspectorValue {name: "Object Type", value: obj.object_type.clone()}
-            ObjectInspectorContents {obj: obj.object_type}
-            ObjectInspectorProperties {properties: obj.object_properties}
+            TypeInspectorValue {name: "Object ID", value: obj.object_id}
+            TypeInspectorValue {name: "Object Type", value: obj.object_type.clone()}
+            TypeInspectorProperties {properties: obj.object_properties}
+            type_inspector_contents {obj: obj.object_type}
         }
     }
 }
 
 #[component]
-fn ObjectInspectorContents(obj: ObjectType) -> Element {
+fn type_inspector_contents(obj: ObjectType, name: Option<String>) -> Element {
+    let name = name.unwrap_or_else(|| String::from("Value"));
     match obj {
-        ObjectType::Amf0Number(value) => rsx! {ObjectInspectorValue {name: "Value", value}},
-        ObjectType::Amf0Bool(value) => rsx! {ObjectInspectorValue {name: "Value", value}},
-        ObjectType::Amf0String(value) => rsx! {ObjectInspectorValue {name: "Value", value}},
-        ObjectType::Amf3Integer(value) => rsx! {ObjectInspectorValue {name: "Value", value}},
-        ObjectType::Amf3Double(value) => rsx! {ObjectInspectorValue {name: "Value", value}},
-        ObjectType::Amf3String(value) => rsx! {ObjectInspectorValue {name: "Value", value}},
+        ObjectType::Amf0Number(value) => rsx! {TypeInspectorValue {name, value}},
+        ObjectType::Amf0Bool(value) => rsx! {TypeInspectorValue {name, value}},
+        ObjectType::Amf0String(value) => rsx! {TypeInspectorValue {name, value}},
+        ObjectType::Amf3Integer(value) => rsx! {TypeInspectorValue {name, value}},
+        ObjectType::Amf3Double(value) => rsx! {TypeInspectorValue {name, value}},
+        ObjectType::Amf3String(value) => rsx! {TypeInspectorValue {name, value}},
         ObjectType::Amf3Array(value) => {
-            rsx! {ObjectInspectorValue {name: "Value", value: format!("{:?}", value) }}
+            rsx! {TypeInspectorValue {name, value: format!("{:?}", value) }}
         }
+        ObjectType::Amf3Object(value) => {
+            rsx! {ObjectInspector {obj: value}}
+        }
+        ObjectType::Amf3Undefined | ObjectType::Amf0Undefined => rsx! {
+            TypeInspectorValue {name, value: "Undefined"}
+        },
 
         _ => rsx! {},
     }
 }
+
 #[component]
-fn ObjectInspectorProperties(properties: ObjectProperties) -> Element {
+fn ObjectInspector(obj: HashMap<String, Option<usize>>) -> Element {
+    let obj_context = use_context::<ObjectContext>();
+    let handle = obj_context.objects.read();
+    tracing::debug!("Object: {:?}", handle);
+    rsx! {
+        h1 {
+            class: "text-ctp-text font-bold",
+            "Children"
+        }
+        for (key, id) in obj.iter() {
+            type_inspector_contents{obj: {
+                let x = handle.get(id.unwrap()).unwrap().clone().object_type;
+                tracing::debug!("Object: {:?} | {}", x, id.unwrap());
+                x
+            }, name: key.clone()}
+        }
+    }
+}
+
+#[component]
+fn TypeInspectorProperties(properties: TypeProperties) -> Element {
     match properties {
-        ObjectProperties::Amf3StringProperties(prop) => {
+        TypeProperties::Amf3StringProperties(prop) => {
             if prop.is_reference {
                 rsx! {
-                    ObjectInspectorValue {name: "Is Reference?", value: prop.is_reference}
-                    ObjectInspectorValue {name: "Identifier", value: prop.identifier}
+                    TypeInspectorValue {name: "Is Reference?", value: prop.is_reference}
+                    TypeInspectorValue {name: "Identifier", value: prop.identifier}
                 }
             } else {
                 rsx! {
-                    ObjectInspectorValue {name: "Is Reference?", value: prop.is_reference}
-                    ObjectInspectorValue {name: "String Length", value: prop.identifier}
+                    TypeInspectorValue {name: "Is Reference?", value: prop.is_reference}
+                    TypeInspectorValue {name: "String Length", value: prop.identifier}
                 }
+            }
+        }
+        TypeProperties::Amf3ObjectProperties(prop) => {
+            rsx! {
+                TypeInspectorValue {name: "Object Name", value: prop.object_type}
+                TypeInspectorValue {name: "Is Reference?", value: prop.is_reference}
+                TypeInspectorValue {name: "Property Count", value: prop.property_count}
+                TypeInspectorValue {name: "Encoding", value: prop.encoding}
+                TypeInspectorValue {name: "Externalisable", value: prop.externalisable}
+                TypeInspectorValue {name: "Dynamic", value: prop.dynamic}
             }
         }
         _ => rsx! {},
@@ -289,7 +327,7 @@ fn ObjectInspectorProperties(properties: ObjectProperties) -> Element {
 }
 
 #[component]
-fn ObjectInspectorValue(name: String, value: String) -> Element {
+fn TypeInspectorValue(name: String, value: String) -> Element {
     rsx! {
          span {
             class: "flex flex-row",
@@ -323,7 +361,7 @@ fn RightBar() -> Element {
                 class: "text-ctp-text font-bold",
                 "Object Inspector"
             }
-            ObjectInspector {obj}
+            object_inspector {obj}
         }
     }
 }

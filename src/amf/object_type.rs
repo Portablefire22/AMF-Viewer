@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
 
@@ -27,7 +28,7 @@ pub enum ObjectType {
     Amf3XMLDocument,
     Amf3Date,
     Amf3Array(Vec<usize>),
-    Amf3Object,
+    Amf3Object(HashMap<String, Option<usize>>),
     Amf3XML,
     Amf3ByteArray,
     Amf3VectorInt,
@@ -63,7 +64,7 @@ impl fmt::Display for ObjectType {
             ObjectType::Amf3XMLDocument => write!(f, "Amf3 XML Document"),
             ObjectType::Amf3Date => write!(f, "Amf3 Date"),
             ObjectType::Amf3Array(_) => write!(f, "Amf3 Array"),
-            ObjectType::Amf3Object => write!(f, "Amf3 Object"),
+            ObjectType::Amf3Object(_) => write!(f, "Amf3 Object"),
             ObjectType::Amf3XML => write!(f, "Amf3 XML"),
             ObjectType::Amf3ByteArray => write!(f, "Amf3 Byte Array"),
             ObjectType::Amf3VectorInt => write!(f, "Amf3 Vector Int"),

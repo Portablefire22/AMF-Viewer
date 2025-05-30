@@ -1,11 +1,12 @@
 #[derive(Clone, Debug, PartialEq)]
-pub enum ObjectProperties {
+pub enum TypeProperties {
     Amf0StringProperties,
     Amf0ObjectProperties,
     Amf0TypedObjectProperties,
 
     Amf3StringProperties(GenericProperties),
     Amf3ArrayProperties(GenericProperties),
+    Amf3ObjectProperties(ObjectProperties),
     AmfNoProperties,
 }
 
@@ -20,6 +21,36 @@ impl GenericProperties {
         Self {
             is_reference,
             identifier,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ObjectProperties {
+    pub(crate) is_reference: bool,
+    pub(crate) property_count: usize,
+    pub(crate) encoding: usize,
+    pub(crate) externalisable: bool,
+    pub(crate) dynamic: bool,
+    pub(crate) object_type: String,
+}
+
+impl ObjectProperties {
+    pub fn new(
+        is_reference: bool,
+        property_count: usize,
+        encoding: usize,
+        externalisable: bool,
+        dynamic: bool,
+        object_type: String,
+    ) -> Self {
+        Self {
+            is_reference,
+            property_count,
+            encoding,
+            externalisable,
+            dynamic,
+            object_type,
         }
     }
 }
