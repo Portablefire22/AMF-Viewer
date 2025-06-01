@@ -280,7 +280,6 @@ fn type_inspector_contents(obj: ObjectType, name: Option<String>) -> Element {
 fn ObjectInspector(obj: HashMap<String, Option<usize>>) -> Element {
     let obj_context = use_context::<ObjectContext>();
     let handle = obj_context.objects.read();
-    tracing::debug!("Object: {:?}", handle);
     rsx! {
         h1 {
             class: "text-ctp-text font-bold",
@@ -289,7 +288,7 @@ fn ObjectInspector(obj: HashMap<String, Option<usize>>) -> Element {
         for (key, id) in obj.iter() {
             type_inspector_contents{obj: {
                 let x = handle.get(id.unwrap()).unwrap().clone().object_type;
-                tracing::debug!("Object: {:?} | {}", x, id.unwrap());
+                tracing::debug!("Key: {} | Value: {:?}", key, x);
                 x
             }, name: key.clone()}
         }

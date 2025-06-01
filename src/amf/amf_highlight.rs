@@ -10,8 +10,6 @@ use crate::amf::object_type::ObjectType::{
     Amf0Number, Amf3Array, Amf3Object, Amf3String, Amf3Undefined,
 };
 use crate::amf::syntax_byte::SyntaxByte;
-use dioxus::html::completions::CompleteWithBraces::object;
-use dioxus::html::g::string;
 use dioxus::logger::tracing;
 use std::collections::HashMap;
 use std::io::Read;
@@ -527,13 +525,10 @@ impl AMFReader {
                 result.externalisable = (result.encoding & 0x01) != 0;
                 result.dynamic = ((refer >> 1) & 0x01) != 0;
                 result.property_count = refer as usize >> 2;
-                tracing::debug!("Property count: {}", &result.property_count);
-
                 result.object_type = self.read_amf3_string(None);
 
                 for i in 0..result.property_count {
                     let key = self.read_amf3_string(None);
-                    tracing::debug!("Prop: {} | Key: {}", i, key);
                     result.properties.insert(key, None);
                 }
             } else {
