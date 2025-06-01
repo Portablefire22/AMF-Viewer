@@ -7,7 +7,7 @@ use crate::amf::object_properties::TypeProperties::{
 use crate::amf::object_properties::{GenericProperties, ObjectProperties};
 use crate::amf::object_type::ObjectType;
 use crate::amf::object_type::ObjectType::{
-    Amf0Number, Amf3Array, Amf3Object, Amf3String, Amf3Undefined,
+    Amf0Number, Amf0Undefined, Amf3Array, Amf3Object, Amf3String, Amf3Undefined,
 };
 use crate::amf::syntax_byte::SyntaxByte;
 use dioxus::logger::tracing;
@@ -38,6 +38,7 @@ const AMF3_STRING: &'static str = "text-ctp-yellow";
 const AMF3_DATE: &'static str = "text-ctp-rosewater";
 const AMF3_ARRAY: &'static str = "text-ctp-lavender";
 const AMF3_OBJECT: &'static str = "text-ctp-mauve";
+const AMF_ERROR: &'static str = "text-red-500";
 
 // I fucking LOVE Action Message Format
 pub struct AMFReader {
@@ -46,22 +47,25 @@ pub struct AMFReader {
     pub(crate) out: Vec<SyntaxByte>,
     encoding: u8,
     current_layer: u8, // Change colour depending on object layer
-    pub(crate) objects: Vec<ObjectInfo>,
+    pub(crate) objects: HashMap<isize, ObjectInfo>,
     strings: Vec<String>,
+
+    is_error: bool, // Are we in an error state right now?
 }
 
 impl AMFReader {
     pub fn new(buffer: &Vec<u8>, is_command: bool) -> Self {
         if is_command {
-            let encoding = buffer[0];
+            //let encoding = buffer[0];
             AMFReader {
                 buffer: buffer.clone(),
                 read_head: 1,
                 out: Vec::new(),
-                encoding,
+                encoding: 0,
                 current_layer: 0,
-                objects: Vec::new(),
+                objects: HashMap::new(),
                 strings: Vec::new(),
+                is_error: false,
             }
         } else {
             AMFReader {
@@ -70,26 +74,50 @@ impl AMFReader {
                 out: Vec::new(),
                 encoding: 0,
                 current_layer: 0,
-                objects: Vec::new(),
+                objects: HashMap::new(),
                 strings: Vec::new(),
+                is_error: false,
             }
         }
     }
 
     pub fn highlight(&mut self) {
         while &self.read_head < &self.buffer.len() {
+            if self.is_error {
+                let b = match self.read_byte() {
+                    None => break,
+                    Some(b) => *b,
+                };
+
+                let syn = SyntaxByte {
+                    value: b,
+                    object_id: -1,
+                    color: AMF_ERROR.parse().unwrap(),
+                };
+                self.push_byte(syn)
+            }
             if self.encoding == 0 {
                 self.read_amf0();
             } else {
                 self.read_amf3();
             }
         }
+        if self.is_error {
+            self.objects.insert(
+                -1,
+                ObjectInfo {
+                    object_id: -1,
+                    object_type: Amf0Undefined,
+                    object_properties: AmfNoProperties,
+                },
+            );
+        }
     }
 
-    fn read_amf0_integer(&mut self, object_id: Option<usize>) {
-        let object_id: usize = match object_id {
+    fn read_amf0_integer(&mut self, object_id: Option<isize>) {
+        let object_id: isize = match object_id {
             Some(id) => id,
-            None => self.objects.len(),
+            None => self.objects.len() as isize,
         };
         let syntax = SyntaxByte {
             value: 0,
@@ -100,19 +128,28 @@ impl AMFReader {
 
         let number = f64::from_be_bytes(<[u8; 8]>::try_from(bytes).unwrap());
 
-        self.objects.push(ObjectInfo {
+        self.objects.insert(
             object_id,
-            object_type: Amf0Number(number),
-            object_properties: AmfNoProperties,
-        });
+            ObjectInfo {
+                object_id,
+                object_type: Amf0Number(number),
+                object_properties: AmfNoProperties,
+            },
+        );
     }
 
-    fn read_amf0_bool(&mut self, object_id: Option<usize>) {
-        let object_id: usize = match object_id {
+    fn read_amf0_bool(&mut self, object_id: Option<isize>) {
+        let object_id: isize = match object_id {
             Some(id) => id,
-            None => self.objects.len(),
+            None => self.objects.len() as isize,
         };
-        let byte = self.read_byte();
+        let byte = match self.read_byte() {
+            Some(b) => *b,
+            None => {
+                self.is_error = true;
+                return;
+            }
+        };
         let mut syntax = SyntaxByte {
             value: byte,
             object_id,
@@ -129,17 +166,24 @@ impl AMFReader {
             object_properties: AmfNoProperties,
         };
 
-        self.objects.push(info);
+        self.objects.insert(object_id, info);
     }
 
-    fn read_amf0_string(&mut self, object_id: Option<usize>) -> String {
+    fn read_amf0_string(&mut self, object_id: Option<isize>) -> String {
         self.read_amf0_utf8(None, object_id)
     }
 
-    fn read_amf0_utf_length(&mut self, colour: Option<String>, object_id: usize) -> u16 {
+    fn read_amf0_utf_length(&mut self, colour: Option<String>, object_id: isize) -> u16 {
         let colour = colour.unwrap_or_else(|| AMF0_STRING.parse().unwrap());
         // I love fighting the borrow checker
-        let len_bytes = &self.buffer[self.read_head..self.read_head + 2];
+        let len_bytes = (&self.buffer).get(self.read_head..self.read_head + 2);
+        let len_bytes = match len_bytes {
+            Some(b) => b,
+            None => {
+                self.is_error = true;
+                return 0;
+            }
+        };
         self.read_head += 2;
         let length = ((len_bytes[0] as u16) << 8) | len_bytes[1] as u16;
         for i in len_bytes {
@@ -153,19 +197,30 @@ impl AMFReader {
         length
     }
 
-    fn read_amf0_utf8(&mut self, colour: Option<String>, object_id: Option<usize>) -> String {
-        let object_id: usize = match object_id {
+    fn read_amf0_utf8(&mut self, colour: Option<String>, object_id: Option<isize>) -> String {
+        let object_id: isize = match object_id {
             Some(id) => id,
-            None => self.objects.len(),
+            None => self.objects.len() as isize,
         };
 
         let length = self.read_amf0_utf_length(colour.clone(), object_id);
 
         let colour = colour.unwrap_or_else(|| AMF0_STRING.parse().unwrap());
         let mut out = String::new();
-        self.read_bytes(length as usize)
-            .read_to_string(&mut out)
-            .unwrap();
+        match self.read_bytes(length as usize) {
+            Some(mut b) => match b.read_to_string(&mut out) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Could not read stream: {:?}", e);
+                    self.is_error = true;
+                    return String::new();
+                }
+            },
+            None => {
+                self.is_error = true;
+                return String::new();
+            }
+        };
         for i in out.as_bytes() {
             let syntax = SyntaxByte {
                 value: *i,
@@ -181,15 +236,15 @@ impl AMFReader {
             object_properties: Amf0StringProperties,
         };
 
-        self.objects.push(info);
+        self.objects.insert(object_id, info);
 
         out
     }
 
-    fn read_amf0_object(&mut self, object_id: Option<usize>) {
-        let object_id: usize = match object_id {
+    fn read_amf0_object(&mut self, object_id: Option<isize>) {
+        let object_id: isize = match object_id {
             Some(id) => id,
-            None => self.objects.len(),
+            None => self.objects.len() as isize,
         };
 
         let info = ObjectInfo {
@@ -198,7 +253,7 @@ impl AMFReader {
             object_properties: Amf0ObjectProperties,
         };
 
-        self.objects.push(info);
+        self.objects.insert(object_id, info);
 
         self.current_layer += 1;
         loop {
@@ -208,7 +263,13 @@ impl AMFReader {
             );
             tracing::debug!("Key: '{}'", key);
             if key.is_empty() {
-                let b = self.read_byte();
+                let b = match self.read_byte() {
+                    Some(b) => *b,
+                    None => {
+                        self.is_error = true;
+                        return;
+                    }
+                };
                 let syntax = SyntaxByte {
                     value: b,
                     object_id,
@@ -227,10 +288,10 @@ impl AMFReader {
         }
     }
 
-    fn read_amf0_typed_object(&mut self, object_id: Option<usize>) {
-        let object_id: usize = match object_id {
+    fn read_amf0_typed_object(&mut self, object_id: Option<isize>) {
+        let object_id: isize = match object_id {
             Some(id) => id,
-            None => self.objects.len(),
+            None => self.objects.len() as isize,
         };
 
         let info = ObjectInfo {
@@ -239,7 +300,7 @@ impl AMFReader {
             object_properties: Amf0TypedObjectProperties,
         };
 
-        self.objects.push(info);
+        self.objects.insert(object_id, info);
 
         self.current_layer += 1;
         self.read_amf0_utf8(
@@ -253,9 +314,18 @@ impl AMFReader {
         self.read_amf0_object(Some(object_id));
     }
 
-    pub fn read_amf0(&mut self) {
-        let current_byte = self.read_byte();
-        let object_id = self.objects.len();
+    pub fn read_amf0(&mut self) -> isize {
+        if self.is_error {
+            return -1;
+        }
+        let current_byte = match self.read_byte() {
+            Some(byte) => *byte,
+            None => {
+                self.is_error = true;
+                return -1;
+            }
+        };
+        let object_id = self.objects.len() as isize;
         match current_byte {
             0x00 => {
                 self.out.push(SyntaxByte {
@@ -307,7 +377,7 @@ impl AMFReader {
                     object_properties: AmfNoProperties,
                 };
 
-                self.objects.push(info);
+                self.objects.insert(object_id, info);
                 self.push_byte(syntax);
             }
             // 0x07 => {}
@@ -340,7 +410,7 @@ impl AMFReader {
                     object_properties: AmfNoProperties,
                 };
 
-                self.objects.push(info);
+                self.objects.insert(object_id, info);
             }
             _ => {
                 self.out.push(SyntaxByte {
@@ -354,15 +424,16 @@ impl AMFReader {
                     object_properties: AmfNoProperties,
                 };
 
-                self.objects.push(info);
+                self.objects.insert(object_id, info);
             }
         }
+        object_id
     }
 
-    pub fn read_amf3_integer(&mut self, object_id: Option<usize>) -> i32 {
-        let object_id: usize = match object_id {
+    pub fn read_amf3_integer(&mut self, object_id: Option<isize>) -> i32 {
+        let object_id: isize = match object_id {
             Some(id) => id,
-            None => self.objects.len(),
+            None => self.objects.len() as isize,
         };
         let syntax = SyntaxByte {
             value: 0,
@@ -375,20 +446,32 @@ impl AMFReader {
             object_type: ObjectType::Amf3Integer(out),
             object_properties: AmfNoProperties,
         };
-        self.objects.push(info);
+        self.objects.insert(object_id, info);
         out
     }
 
     fn amf3_integer(&mut self, mut syntax: SyntaxByte) -> i32 {
         let mut out: i32 = 0;
         let mut i = 0;
-        let mut current_byte = self.read_byte();
+        let mut current_byte = match self.read_byte() {
+            Some(b) => *b,
+            None => {
+                self.is_error = true;
+                return -1;
+            }
+        };
         syntax.value = current_byte;
         self.out.push(syntax.clone());
 
         while current_byte & 0x80 != 0 && i < 3 {
             out = (out << 7) + (current_byte & 0x7F) as i32;
-            current_byte = self.read_byte();
+            current_byte = match self.read_byte() {
+                Some(b) => *b,
+                None => {
+                    self.is_error = true;
+                    return -1;
+                }
+            };
             let mut syntax = syntax.clone();
             syntax.value = current_byte;
             self.out.push(syntax);
@@ -402,10 +485,10 @@ impl AMFReader {
         out
     }
 
-    pub fn read_amf3_string_length(&mut self, object_id: Option<usize>) -> i32 {
-        let object_id: usize = match object_id {
+    pub fn read_amf3_string_length(&mut self, object_id: Option<isize>) -> i32 {
+        let object_id: isize = match object_id {
             Some(id) => id,
-            None => self.objects.len(),
+            None => self.objects.len() as isize,
         };
         let syntax = SyntaxByte {
             value: 0,
@@ -416,10 +499,10 @@ impl AMFReader {
         self.amf3_integer(syntax)
     }
 
-    pub fn read_amf3_string(&mut self, object_id: Option<usize>) -> String {
-        let object_id: usize = match object_id {
+    pub fn read_amf3_string(&mut self, object_id: Option<isize>) -> String {
+        let object_id: isize = match object_id {
             Some(id) => id,
-            None => self.objects.len(),
+            None => self.objects.len() as isize,
         };
 
         let mut refe = self.read_amf3_string_length(Some(object_id));
@@ -438,7 +521,7 @@ impl AMFReader {
                     out.len() as i32,
                 )),
             };
-            self.objects.push(info);
+            self.objects.insert(object_id, info);
             self.strings.push(out.clone());
             out
         } else {
@@ -452,15 +535,15 @@ impl AMFReader {
                 object_type: ObjectType::Amf3String(s.clone()),
                 object_properties: Amf3StringProperties(GenericProperties::new(true, refe)),
             };
-            self.objects.push(info);
+            self.objects.insert(object_id, info);
             s
         }
     }
 
-    pub fn read_amf3_utf8(&mut self, length: i32, object_id: Option<usize>) -> String {
-        let object_id: usize = match object_id {
+    pub fn read_amf3_utf8(&mut self, length: i32, object_id: Option<isize>) -> String {
+        let object_id: isize = match object_id {
             Some(id) => id,
-            None => self.objects.len(),
+            None => self.objects.len() as isize,
         };
         let syntax = SyntaxByte {
             value: 0,
@@ -473,46 +556,36 @@ impl AMFReader {
         out
     }
 
-    pub fn read_amf3_array(&mut self, object_id: Option<usize>) -> Vec<usize> {
-        let object_id: usize = match object_id {
+    pub fn read_amf3_array(&mut self, object_id: Option<isize>) -> Vec<isize> {
+        let object_id: isize = match object_id {
             Some(id) => id,
-            None => self.objects.len(),
+            None => self.objects.len() as isize,
         };
 
         let mut out = Vec::new();
         let mut refer = self.read_amf3_string_length(Some(object_id));
         refer >>= 1;
-        let mut obj = ObjectInfo {
-            object_id,
-            object_type: Amf3Array(Vec::new()),
-            object_properties: Amf3ArrayProperties(GenericProperties::new(false, refer)),
-        };
-        self.objects.push(obj.clone());
 
         for _ in 0..refer {
             let id = self.read_amf3();
             out.push(id);
         }
-        obj.object_type = Amf3Array(out.clone());
-        self.objects[object_id] = obj;
+        let obj = ObjectInfo {
+            object_id,
+            object_type: Amf3Array(out.clone()),
+            object_properties: Amf3ArrayProperties(GenericProperties::new(false, refer)),
+        };
+        self.objects.insert(object_id, obj.clone());
         out
     }
 
-    fn read_amf3_object(&mut self, object_id: Option<usize>) -> AmfObject {
-        let object_id: usize = match object_id {
+    fn read_amf3_object(&mut self, object_id: Option<isize>) -> AmfObject {
+        let object_id: isize = match object_id {
             Some(id) => id,
-            None => self.objects.len(),
+            None => self.objects.len() as isize,
         };
 
         let mut result = AmfObject::new(0, false, false, String::new(), HashMap::new());
-
-        let mut obj = ObjectInfo {
-            object_id,
-            object_type: Amf3Undefined,
-            object_properties: AmfNoProperties,
-        };
-
-        self.objects.push(obj.clone());
 
         let mut refer = self.read_amf3_string_length(Some(object_id));
         refer >>= 1;
@@ -557,30 +630,36 @@ impl AMFReader {
         }
 
         let handle = &result;
-        obj.object_type = Amf3Object(handle.properties.clone());
+        let obj = ObjectInfo {
+            object_id,
+            object_type: Amf3Object(handle.properties.clone()),
+            object_properties: Amf3ObjectProperties(ObjectProperties::new(
+                is_reference,
+                handle.properties.len(),
+                handle.encoding as usize,
+                handle.externalisable,
+                handle.dynamic,
+                handle.object_type.clone(),
+            )),
+        };
 
-        obj.object_properties = Amf3ObjectProperties(ObjectProperties::new(
-            is_reference,
-            handle.properties.len(),
-            handle.encoding as usize,
-            handle.externalisable,
-            handle.dynamic,
-            handle.object_type.clone(),
-        ));
-
-        match self.objects.get_mut(object_id) {
-            None => self.objects.push(obj),
-            Some(object) => {
-                *object = obj;
-            }
-        }
+        self.objects.insert(object_id, obj);
 
         result
     }
 
-    pub fn read_amf3(&mut self) -> usize {
-        let object_id = self.objects.len();
-        let current_byte = self.read_byte();
+    pub fn read_amf3(&mut self) -> isize {
+        if self.is_error {
+            return -1;
+        }
+        let object_id = self.objects.len() as isize;
+        let current_byte = match self.read_byte() {
+            Some(byte) => *byte,
+            None => {
+                self.is_error = true;
+                return -1;
+            }
+        };
         match current_byte {
             0x01 => {
                 self.out.push(SyntaxByte {
@@ -593,7 +672,7 @@ impl AMFReader {
                     object_type: ObjectType::Amf3Null,
                     object_properties: AmfNoProperties,
                 };
-                self.objects.push(info);
+                self.objects.insert(object_id, info);
             }
             0x02 => {
                 // False
@@ -607,7 +686,7 @@ impl AMFReader {
                     object_type: ObjectType::Amf3False,
                     object_properties: AmfNoProperties,
                 };
-                self.objects.push(info);
+                self.objects.insert(object_id, info);
             }
             0x03 => {
                 // True
@@ -621,7 +700,7 @@ impl AMFReader {
                     object_type: ObjectType::Amf3True,
                     object_properties: AmfNoProperties,
                 };
-                self.objects.push(info)
+                self.objects.insert(object_id, info);
             }
             0x04 => {
                 // Integer
@@ -675,29 +754,25 @@ impl AMFReader {
                     object_type: ObjectType::Amf3Undefined,
                     object_properties: AmfNoProperties,
                 };
-                self.objects.push(info)
+                self.objects.insert(object_id, info);
             }
         }
         object_id
     }
 
-    pub fn read_byte(&mut self) -> u8 {
-        if self.read_head >= self.buffer.len() {
-            return 0x20;
+    pub fn read_byte(&mut self) -> Option<&u8> {
+        let b = self.buffer.get(self.read_head);
+        if b.is_some() {
+            self.read_head += 1;
         }
-        let b = self.buffer[self.read_head];
-        self.read_head += 1;
         b
     }
 
-    pub fn read_bytes(&mut self, len: usize) -> &[u8] {
-        // if self.read_head + len >= self.buffer.len() {
-        //     self.buffer[0] = 0x20;
-        //     self.buffer[1] = 0x20;
-        //     return &self.buffer[0..2];
-        // }
-        let b = &self.buffer[self.read_head..self.read_head + len];
-        self.read_head += len;
+    pub fn read_bytes(&mut self, len: usize) -> Option<&[u8]> {
+        let b = (&self.buffer).get(self.read_head..self.read_head + len);
+        if b.is_some() {
+            self.read_head += len;
+        }
         b
     }
 
@@ -709,7 +784,13 @@ impl AMFReader {
         let mut arr = Vec::new();
         for _ in 0..=len {
             let mut copy = syntax_byte.clone();
-            let byte = self.read_byte();
+            let byte = match self.read_byte() {
+                Some(byte) => *byte,
+                None => {
+                    self.is_error = true;
+                    break;
+                }
+            };
             copy.value = byte;
             arr.push(byte);
             self.push_byte(copy);

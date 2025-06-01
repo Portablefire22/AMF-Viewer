@@ -6,7 +6,7 @@ pub struct AmfObject {
     pub(crate) externalisable: bool,
     pub(crate) dynamic: bool,
     pub(crate) object_type: String,
-    pub(crate) properties: HashMap<String, Option<usize>>,
+    pub(crate) properties: HashMap<String, Option<isize>>,
 }
 
 impl AmfObject {
@@ -15,7 +15,7 @@ impl AmfObject {
         externalisable: bool,
         dynamic: bool,
         object_type: String,
-        properties: HashMap<String, Option<usize>>,
+        properties: HashMap<String, Option<isize>>,
     ) -> Self {
         Self {
             property_count: properties.keys().len(),

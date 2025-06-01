@@ -40,15 +40,15 @@ impl OpenedFile {
 
 #[derive(Clone, Debug)]
 struct ObjectContext {
-    objects: Signal<Vec<ObjectInfo>>,
-    selected_index: Signal<usize>,
+    objects: Signal<HashMap<isize, ObjectInfo>>,
+    selected_index: Signal<isize>,
     has_selected: Signal<bool>,
 }
 
 impl ObjectContext {
     pub fn new() -> Self {
         Self {
-            objects: Signal::new(Vec::new()),
+            objects: Signal::new(HashMap::new()),
             selected_index: Signal::new(0),
             has_selected: Signal::new(false),
         }
@@ -128,7 +128,7 @@ fn LeftBar() -> Element {
                                 }
                             };
                             let mut obj_context = use_context::<ObjectContext>();
-                            obj_context.objects.set(Vec::new());
+                            obj_context.objects.set(HashMap::new());
                             obj_context.has_selected.set(false);
                             obj_context.selected_index.set(0);
 
@@ -152,7 +152,11 @@ fn LeftBar() -> Element {
                     input {
                         r#type: "checkbox",
                         checked: command_signal,
-                        oninput: move |_| command_signal.set(!command_signal()),
+                        oninput: move |_| {
+                            let mut obj_context = use_context::<ObjectContext>();
+                            obj_context.selected_index.set(0);
+                            command_signal.set(!command_signal())
+                        },
                     }
                     label {
                         class: "pl-2 text-ctp-text",
@@ -277,7 +281,7 @@ fn type_inspector_contents(obj: ObjectType, name: Option<String>) -> Element {
 }
 
 #[component]
-fn ObjectInspector(obj: HashMap<String, Option<usize>>) -> Element {
+fn ObjectInspector(obj: HashMap<String, Option<isize>>) -> Element {
     let obj_context = use_context::<ObjectContext>();
     let handle = obj_context.objects.read();
     rsx! {
@@ -287,7 +291,7 @@ fn ObjectInspector(obj: HashMap<String, Option<usize>>) -> Element {
         }
         for (key, id) in obj.iter() {
             type_inspector_contents{obj: {
-                let x = handle.get(id.unwrap()).unwrap().clone().object_type;
+                let x = handle.get(&id.unwrap()).unwrap().clone().object_type;
                 tracing::debug!("Key: {} | Value: {:?}", key, x);
                 x
             }, name: key.clone()}
@@ -348,7 +352,7 @@ fn RightBar() -> Element {
     let current_index = cont.selected_index.read();
     let obj = match *cont.has_selected.read() {
         true => {
-            let obj = &cont.objects.read()[current_index.clone()];
+            let obj = &cont.objects.read()[&current_index.clone()];
             Some(obj.clone())
         }
         false => None,

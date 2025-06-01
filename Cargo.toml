@@ -1,6 +1,6 @@
 [package]
 name = "amf_viewer"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Portablefire22 <lilith@kitten.rs>"]
 edition = "2021"
 
